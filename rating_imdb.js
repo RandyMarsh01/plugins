@@ -2,21 +2,21 @@
     'use strict';
 
     function rating_kp_imdb(card) {
-        var network = new Lampa.Reguest();
-        var clean_title = kpCleanTitle(card.title);
+        // ИСПРАВЛЕНО: Request через "q"
+        var network = new Lampa.Request(); 
+        var clean_title = kpCleanTitle(card.title || card.name); // Добавлено card.name для сериалов
         var search_date = card.release_date || card.first_air_date || card.last_air_date || '0000';
         var search_year = parseInt((search_date + '').slice(0, 4));
         
-        // Используем прокси для стабильности и обхода CORS
         var kp_prox = 'https://cors.lampa.stream/'; 
         
         var params = {
             id: card.id,
             url: kp_prox + 'https://kinopoiskapiunofficial.tech/',
             headers: {
-                'X-API-KEY': '653f6b8a-d94a-43c6-93af-6ce67a2cc5c4' // Твой личный ключ
+                'X-API-KEY': '653f6b8a-d94a-43c6-93af-6ce67a2cc5c4' 
             },
-            cache_time: 86400000 // Кэшируем на 24 часа
+            cache_time: 86400000 
         };
 
         getRating();
@@ -33,11 +33,9 @@
         function searchFilm() {
             var url = params.url + 'api/v2.2/films';
             
-            // Если в карточке Lampa есть IMDB ID, ищем по нему (самый точный способ)
             if (card.imdb_id) {
                 url = Lampa.Utils.addUrlComponent(url, 'imdbId=' + encodeURIComponent(card.imdb_id));
             } else {
-                // Иначе ищем по названию
                 url = params.url + 'api/v2.1/films/search-by-keyword?keyword=' + encodeURIComponent(clean_title);
             }
 
@@ -52,14 +50,12 @@
                 }
             }, function (a, c) {
                 _showRating({kp: 0, imdb: 0});
-                console.log('Rating error:', network.errorDecode(a, c));
             }, false, {
                 headers: params.headers
             });
         }
 
         function chooseFilm(items) {
-            // Выбираем результат, подходящий по году
             var selected = items[0]; 
             if (items.length > 1 && search_year) {
                 var filter = items.filter(function(i) { 
@@ -71,7 +67,6 @@
 
             var id = selected.kinopoiskId || selected.filmId;
             
-            // Запрашиваем полные данные фильма, где есть все рейтинги
             network.clear();
             network.silent(params.url + 'api/v2.2/films/' + id, function (data) {
                 var movieRating = _setCache(params.id, {
@@ -117,9 +112,8 @@
 
                 var target = $('.info__rate', render);
                 if (target.length) {
-                    // Создаем блоки, если их нет в шаблоне
                     if (!$('.rate--kp', render).length) {
-                        target.append('<div class="rate--kp hide"><div></div><span>Кинопоиск</span></div>');
+                        target.append('<div class="rate--kp hide" style="margin-right: 10px;"><div></div><span>Кинопоиск</span></div>');
                     }
                     if (!$('.rate--imdb', render).length) {
                         target.append('<div class="rate--imdb hide"><div></div><span>IMDb</span></div>');
@@ -137,12 +131,12 @@
 
     function startPlugin() {
         window.rating_plugin = true;
+        // ИСПРАВЛЕНО: событие 'complete' вместо 'complite'
         Lampa.Listener.follow('full', function (e) {
-            if (e.type == 'complite') {
+            if (e.type == 'complete') { 
                 var render = e.object.activity.render();
-                // Проверяем, не добавлен ли уже рейтинг, чтобы не дублировать
                 if (!$('.wait_rating', render).length && !$('.rate--kp', render).not('.hide').length) {
-                    $('.info__rate', render).after('<div style="width:2em;margin-top:1em;margin-right:1em" class="wait_rating"><div class="broadcast__scan"><div></div></div><div>');
+                    $('.info__rate', render).after('<div style="width:2em;margin-top:1em;margin-right:1em" class="wait_rating"><div class="broadcast__scan"><div></div></div></div>');
                     rating_kp_imdb(e.data.movie);
                 }
             }
