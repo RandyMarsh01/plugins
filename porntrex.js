@@ -9,12 +9,8 @@
         var body = $('<div class="category-full__body"></div>');
         var host = 'https://www.porntrex.com';
         
-        // Оставляем только те прокси, которые корректно отдают CORS заголовки для Lampa
-        var proxies = [
-            'https://cors.lampa.stream/',
-            'https://api.allorigins.win/get?url='
-        ];
-        var currentProxyIndex = 0;
+        // Используем AllOrigins как основной, так как он прошел проверку CORS
+        var proxy = 'https://api.allorigins.win/get?url=';
 
         this.create = function () {
             html.append(scroll.render());
@@ -32,35 +28,25 @@
 
         this.load = function () {
             var _this = this;
+            // Для AllOrigins используем главную или /videos/
             var path = object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/videos/';
-            var proxy = proxies[currentProxyIndex];
             var url = proxy + encodeURIComponent(host + path + '?p=' + (object.page || 1));
 
-            // Используем network.silent с принудительным указанием типа данных
-            network.silent(url, function (response) {
+            network.silent(url, function (json) {
                 if (_this.activity && _this.activity.loader) _this.activity.loader(false);
                 
-                // AllOrigins оборачивает ответ в JSON, проверяем это
-                var str = typeof response === 'object' ? response.contents : response;
+                // AllOrigins всегда возвращает JSON объект с полем contents
+                var str = (json && json.contents) ? json.contents : '';
 
                 if (str && str.indexOf('<html') !== -1) {
                     _this.parse(str);
                 } else {
-                    _this.nextProxy();
+                    _this.empty('Сайт вернул пустой контент через прокси.');
                 }
             }, function () {
-                _this.nextProxy();
+                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
+                _this.empty('Прокси-сервер не отвечает.');
             });
-        };
-
-        this.nextProxy = function() {
-            currentProxyIndex++;
-            if (currentProxyIndex < proxies.length) {
-                this.load();
-            } else {
-                if (this.activity && this.activity.loader) this.activity.loader(false);
-                this.empty('Браузер или сайт блокирует все прокси. Включите в Lampa "Использовать прокси для парсинга" в настройках.');
-            }
         };
 
         this.empty = function(msg) {
@@ -70,28 +56,43 @@
         this.parse = function (str) {
             var _this = this;
             var found = 0;
-            // Чистим код от лишнего мусора перед созданием DOM
+            
+            // Упрощаем HTML для парсинга
             var clean_html = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
             var dom = $($.parseHTML(clean_html));
-            var cards = dom.find('.item-video, .video-item, .thumb-block, .p-v-thumb');
+            
+            // Расширенный поиск по всем возможным классам плиток Porntrex
+            var cards = dom.find('.video-item, .item-video, .thumb-block, .p-v-thumb, .v-thumb, [class*="thumb"]');
 
             cards.each(function () {
                 var $this = $(this);
+                // Ищем ссылку, которая ведет на страницу видео
                 var link = $this.find('a[href*="/video/"]').first();
-                var img = $this.find('img').attr('data-src') || $this.find('img').attr('src');
-                var title = link.attr('title') || $this.find('.title, .name').text();
+                var img_el = $this.find('img').first();
+                var img = img_el.attr('data-src') || img_el.attr('src') || img_el.attr('data-original');
+                var title = link.attr('title') || $this.find('.title, .name, [class*="title"]').text();
+                var time = $this.find('.duration, .time, .t-length').text().trim();
 
-                if (link.attr('href') && title) {
+                if (link.attr('href') && title.trim()) {
                     found++;
                     var card_data = {
                         title: title.trim(),
                         url: host + link.attr('href'),
-                        img: img
+                        img: img,
+                        time: time
                     };
 
                     var card = Lampa.Template.get('card', {title: card_data.title});
                     card.addClass('card--collection');
-                    card.find('.card__img').attr('src', card_data.img);
+                    
+                    if (card_data.img) {
+                        if (card_data.img.startsWith('//')) card_data.img = 'https:' + card_data.img;
+                        card.find('.card__img').attr('src', card_data.img);
+                    }
+                    
+                    if (card_data.time) {
+                        card.find('.card__view').after('<div class="card__age">' + card_data.time + '</div>');
+                    }
                     
                     card.on('hover:enter', function () {
                         _this.play(card_data);
@@ -105,18 +106,20 @@
             if (found > 0) {
                 Lampa.Controller.enable('content');
             } else {
-                this.empty('Данные получены, но видео не найдены. Селекторы не совпали.');
+                this.empty('Видео не найдены. Попробуйте поиск.');
             }
         };
 
         this.play = function (data) {
             var _this = this;
-            Lampa.Noty.show('Поиск потока...');
+            Lampa.Noty.show('Получение видео...');
             
-            var url = proxies[currentProxyIndex] + encodeURIComponent(data.url);
-            network.silent(url, function(response) {
-                var html = typeof response === 'object' ? response.contents : response;
+            var url = proxy + encodeURIComponent(data.url);
+            network.silent(url, function(json) {
+                var html = (json && json.contents) ? json.contents : '';
                 var video_url = '';
+                
+                // Ищем прямую ссылку на mp4/m3u8 в коде страницы
                 var match = html.match(/"video_url":"(.*?)"/) || 
                             html.match(/video_url:\s*'(.*?)'/) ||
                             html.match(/source\s*src="(.*?)"/);
@@ -125,10 +128,16 @@
 
                 if (video_url) {
                     if (video_url.startsWith('//')) video_url = 'https:' + video_url;
-                    Lampa.Player.play({ url: video_url, title: data.title });
-                    Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
+                    
+                    Lampa.Player.play({
+                        url: video_url,
+                        title: data.title
+                    });
+                    Lampa.Player.callback(function () {
+                        Lampa.Controller.toggle('content');
+                    });
                 } else {
-                    Lampa.Noty.show('Ссылка не найдена.');
+                    Lampa.Noty.show('Не удалось найти поток. Возможно, видео удалено.');
                 }
             });
         };
