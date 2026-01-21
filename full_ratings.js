@@ -13,7 +13,7 @@
         source_mc: { ru: 'Metacritic', en: 'Metacritic', uk: 'Metacritic' }
     });
 
-    // 3. Стили (Forced Visibility)
+    // 3. Стили
     var css = `
         <style id="super_ratings_style">
             .super-rate-line { 
@@ -23,7 +23,7 @@
                 margin-top: 10px; 
                 margin-bottom: 10px; 
                 visibility: visible !important;
-                min-height: 26px; /* Чтобы блок не схлопывался */
+                min-height: 26px;
             }
             .rate-badge {
                 display: flex;
@@ -51,11 +51,10 @@
 
     // 4. Основная логика
     function fetchAllRatings(card, container) {
-        var network = new Lampa.Reguest();
+        var network = new (Lampa.Request || Lampa.Reguest)();
         var title = (card.title || card.name).trim();
         var year = parseInt((card.release_date || card.first_air_date || '0000').slice(0, 4));
 
-        // Индикатор загрузки
         var loader = $('<div class="rate-loader">...</div>');
         container.append(loader);
 
@@ -66,7 +65,6 @@
             var film = null;
             var items = json.films || json.items || [];
 
-            // Простая фильтрация по году
             if (items.length) {
                 film = items.find(function(f) {
                     var fy = parseInt(f.year || f.start_date || '0000');
@@ -77,77 +75,68 @@
             if (film) {
                 var kp_id = film.filmId || film.kinopoiskId;
                 
-                // Рисуем быстрый рейтинг из поиска
                 if (film.rating && film.rating !== 'null') {
                     drawBadge(container, 'kp', film.rating, 'source_kp');
                 }
 
-                // Детали (чтобы получить точный КП и IMDb ID)
                 var details_url = 'https://cors.lampa.stream/https://kinopoiskapiunofficial.tech/api/v2.2/films/' + kp_id;
                 
                 network.silent(details_url, function (data) {
-                    // Обновляем КП (если в деталях он точнее)
                     if (data.ratingKinopoisk) drawBadge(container, 'kp', data.ratingKinopoisk, 'source_kp');
-                    
-                    // Если у КП есть данные об IMDB - рисуем
                     if (data.ratingImdb) drawBadge(container, 'imdb', data.ratingImdb, 'source_imdb');
 
-                    // Запускаем OMDB (используем ID от КП или из Лампы)
                     var imdb_id = data.imdbId || card.imdb_id;
                     if (imdb_id) fetchOmdb(imdb_id, container);
                     
-                    loader.remove(); // Убираем загрузку
+                    loader.remove();
                 }, function() {
-                    // Ошибка деталей КП - пробуем OMDB по данным карты
                     if (card.imdb_id) fetchOmdb(card.imdb_id, container);
                     loader.remove();
                 }, false, { headers: { 'X-API-KEY': KP_API_KEY } });
             } else {
-                // Фильм на КП не найден - пробуем OMDB напрямую
                 if (card.imdb_id) fetchOmdb(card.imdb_id, container);
                 loader.remove();
             }
         }, function () {
-            // Ошибка поиска КП
             if (card.imdb_id) fetchOmdb(card.imdb_id, container);
             loader.remove();
         }, false, { headers: { 'X-API-KEY': KP_API_KEY } });
     }
 
-    // --- ШАГ 2: OMDB (RT + Metacritic) ---
+    // --- ШАГ 2: OMDB ---
     function fetchOmdb(imdb_id, container) {
         if (!imdb_id) return;
         var url = 'https://www.omdbapi.com/?apikey=' + OMDB_API_KEY + '&i=' + imdb_id;
 
-        new Lampa.Reguest().silent(url, function (data) {
+        new (Lampa.Request || Lampa.Reguest)().silent(url, function (data) {
             if (data && data.Response === 'True') {
-                // IMDb (если еще не нарисовали или обновить)
                 if (data.imdbRating && data.imdbRating !== 'N/A') {
                     drawBadge(container, 'imdb', data.imdbRating, 'source_imdb');
                 }
 
-                // Rotten Tomatoes
                 var rt = (data.Ratings || []).find(function(i) { return i.Source === 'Rotten Tomatoes'; });
                 if (rt) drawBadge(container, 'rt', rt.Value, 'source_rt');
 
-                // Metacritic
                 var mc = (data.Ratings || []).find(function(i) { return i.Source === 'Metacritic'; });
                 if (mc) drawBadge(container, 'mc', mc.Value.split('/')[0], 'source_mc');
             }
         });
     }
 
-    // Рисовалка плашек
+    // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ОТРИСОВКИ ---
     function drawBadge(container, type, value, lang_key) {
         if (!value || value == 'null' || value == 'N/A') return;
 
-        // Удаляем старый, если есть (чтобы обновить значение)
+        // ИСПРАВЛЕНИЕ ОШИБКИ: Превращаем в строку, чтобы работал indexOf
+        var strValue = String(value);
+
+        // Удаляем старый бейдж
         container.find('.rate--' + type).remove();
 
-        var text = value;
-        // Если это число (КП/IMDb), округляем. Если процент (RT) - оставляем.
-        if (!isNaN(parseFloat(value)) && value.indexOf('%') === -1) {
-            text = parseFloat(value).toFixed(1);
+        var text = strValue;
+        // Если это число (нет процента), форматируем до 1 знака
+        if (strValue.indexOf('%') === -1 && !isNaN(parseFloat(strValue))) {
+            text = parseFloat(strValue).toFixed(1);
         }
 
         var html = `
@@ -160,32 +149,27 @@
 
     // Инициализация
     function startPlugin() {
-        window.super_ratings_plugin_v2 = true;
+        window.super_ratings_plugin_fixed = true;
 
         Lampa.Listener.follow('full', function (e) {
             if (e.type === 'complite' || e.type === 'complete') {
                 var render = e.object.activity.render();
 
-                // --- ПОИСК КОНТЕЙНЕРА (Самое важное!) ---
-                // Пробуем найти стандартные места, куда Лампа сует рейтинги
-                var container = $('.full-start-new__rate-line', render); // Новые темы
-                if (!container.length) container = $('.info__rate', render); // Старые темы
-                if (!container.length) container = $('.full-start__rate-line', render); // Другие варианты
+                var container = $('.full-start-new__rate-line', render);
+                if (!container.length) container = $('.info__rate', render);
+                if (!container.length) container = $('.full-start__rate-line', render);
                 
-                // Если вообще ничего не нашли, создаем свой контейнер после названия
                 if (!container.length) {
                     container = $('<div class="super-rate-line"></div>');
                     $('.full-start__title', render).after(container);
                 }
 
-                // Применяем наш класс для стилей и очищаем от мусора (TMDB)
                 container.addClass('super-rate-line').empty();
 
-                // Запускаем процесс
                 fetchAllRatings(e.data.movie, container);
             }
         });
     }
 
-    if (!window.super_ratings_plugin_v2) startPlugin();
+    if (!window.super_ratings_plugin_fixed) startPlugin();
 })();
