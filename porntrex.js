@@ -4,17 +4,25 @@
     var PorntrexApi = {
         host: 'https://www.porntrex.com',
         
-        // Используем native запрос как в sena.js для обхода CORS
         getHtml: function(url, success, error) {
             var net = new Lampa.Reguest();
-            // В sena.js используется native для прямого доступа к ресурсам
-            net.native(url, function(str) {
-                if (str) success(str);
-                else error();
-            }, error, false, {
+            
+            // Добавляем заголовки как в sena.js для обхода защиты
+            var options = {
                 dataType: 'text',
-                timeout: 10000
-            });
+                timeout: 15000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.porntrex.com/',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                }
+            };
+
+            // Используем native запрос
+            net.native(url, function(str) {
+                if (str && str.length > 500) success(str); // Проверка, что пришел HTML, а не пустая строка
+                else error();
+            }, error, false, options);
         }
     };
 
@@ -33,10 +41,10 @@
             var _this = this;
             Lampa.Loading.start();
             
-            // Добавляем плитку управления
+            // Кнопка Меню
             var menu_card = Lampa.Template.get('card', {title: 'МЕНЮ / ПОИСК'});
             menu_card.addClass('card--collection');
-            menu_card.find('.card__img').css('background', '#2c2c2c');
+            menu_card.find('.card__img').css('background', '#c41c1c').attr('src', ''); 
             menu_card.on('hover:enter', function() { _this.showFilter(); });
             body.append(menu_card);
 
@@ -46,13 +54,14 @@
         this.showFilter = function() {
             var _this = this;
             Lampa.Select.show({
-                title: 'Porntrex',
+                title: 'Разделы Porntrex',
                 items: [
-                    {title: '🔍 Поиск', search: true},
-                    {title: '🔥 Новое', url: '/videos/'},
-                    {title: '⭐ Популярное', url: '/most-popular/'},
-                    {title: '📁 Milf', url: '/categories/milf/'},
-                    {title: '📁 Asian', url: '/categories/asian/'}
+                    {title: '🔍 Поиск видео', search: true},
+                    {title: '🆕 Свежее', url: '/videos/'},
+                    {title: '📈 Популярное', url: '/most-popular/'},
+                    {title: '🏠 Домашнее', url: '/categories/homemade/'},
+                    {title: '👩 Milf', url: '/categories/milf/'},
+                    {title: '🔞 Anal', url: '/categories/anal/'}
                 ],
                 onSelect: function(item) {
                     if (item.search) {
@@ -83,15 +92,14 @@
                 _this.parse(str);
             }, function() {
                 Lampa.Loading.stop();
-                Lampa.Noty.show('Ошибка доступа. Попробуйте включить VPN на ТВ.');
+                Lampa.Noty.show('Блокировка провайдером. Включите VPN или прокси в Лампе.');
             });
         };
 
         this.parse = function (str) {
             var _this = this;
-            var clean = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
-            var dom = $($.parseHTML(clean));
-            var cards = dom.find('.video-item, .item-video, .thumb-block, .v-thumb');
+            var dom = $($.parseHTML(str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")));
+            var cards = dom.find('.video-item, .item-video, .thumb-block');
 
             cards.each(function () {
                 var $this = $(this);
@@ -107,17 +115,20 @@
                     };
                     var card = Lampa.Template.get('card', {title: card_data.title});
                     card.addClass('card--collection');
-                    if (card_data.img) card.find('.card__img').attr('src', card_data.img.startsWith('//') ? 'https:' + card_data.img : card_data.img);
+                    if (card_data.img) {
+                        var thumb = card_data.img.startsWith('//') ? 'https:' + card_data.img : card_data.img;
+                        card.find('.card__img').attr('src', thumb);
+                    }
                     
                     card.on('hover:enter', function () { _this.play(card_data); });
                     body.append(card);
                 }
             });
 
-            if(cards.length > 0) {
-                var next = $('<div class="category-full__next selector"><span>Далее</span></div>');
+            if (cards.length > 0) {
+                var next = $('<div class="category-full__next selector"><span>Загрузить еще</span></div>');
                 next.on('hover:enter', function() {
-                    object.page++;
+                    object.page = (object.page || 1) + 1;
                     Lampa.Activity.replace(object);
                 });
                 body.append(next);
@@ -126,8 +137,9 @@
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Получение видео...');
+            Lampa.Noty.show('Стриминг...');
             PorntrexApi.getHtml(data.url, function(html) {
+                // Извлекаем прямую ссылку на MP4
                 var match = html.match(/"video_url":"(.*?)"/) || html.match(/source\s*src="(.*?)"/);
                 var stream = match ? match[1].replace(/\\/g, '') : '';
                 
@@ -136,11 +148,10 @@
                         url: stream.startsWith('//') ? 'https:' + stream : stream,
                         title: data.title
                     });
-                    Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
                 } else {
-                    Lampa.Noty.show('Файл не найден');
+                    Lampa.Noty.show('Не удалось найти видео-поток');
                 }
-            }, function() { Lampa.Noty.show('Ошибка парсинга видео'); });
+            }, function() { Lampa.Noty.show('Ошибка парсинга'); });
         };
 
         this.render = function () { return html; };
