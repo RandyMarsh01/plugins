@@ -8,7 +8,6 @@
         var html = $('<div class="category-full"></div>');
         var body = $('<div class="category-full__body"></div>');
         
-        // Попробуем сменить зеркало/прокси, если стандартный cors не тянет
         var host = 'https://www.porntrex.com';
         var proxy = 'https://cors.lampa.stream/';
 
@@ -22,21 +21,26 @@
 
         this.load = function () {
             var _this = this;
-            // Используем самый простой путь, который обычно не выдает 404
-            var url = proxy + host + (object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/') + '?p=' + (object.page || 1);
+            var path = object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/videos/';
+            var url = proxy + host + path + '?p=' + (object.page || 1);
 
-            network.silent(url, function (str) {
-                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                
-                // Проверка: пришел ли HTML или ошибка прокси
-                if (typeof str === 'string' && str.indexOf('<html') !== -1) {
-                    _this.parse(str);
-                } else {
-                    _this.empty('Сайт вернул пустой ответ или заблокирован прокси.');
+            // ИСПОЛЬЗУЕМ ОБЫЧНЫЙ native запроса, чтобы избежать ошибки JSON.parse
+            $.ajax({
+                url: url,
+                method: 'GET',
+                dataType: 'text', // Явно просим ТЕКСТ
+                success: function (str) {
+                    if (_this.activity && _this.activity.loader) _this.activity.loader(false);
+                    if (str && str.indexOf('<html') !== -1) {
+                        _this.parse(str);
+                    } else {
+                        _this.empty('Сайт вернул некорректный ответ. Возможно, прокси заблокирован.');
+                    }
+                },
+                error: function () {
+                    if (_this.activity && _this.activity.loader) _this.activity.loader(false);
+                    _this.empty('Ошибка доступа к сайту через прокси.');
                 }
-            }, function (err) {
-                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                _this.empty('Ошибка сети: ' + (err.status || 'Неизвестно'));
             });
         };
 
@@ -46,9 +50,10 @@
 
         this.parse = function (str) {
             var _this = this;
-            // Максимально широкий поиск карточек
-            var cards = $(str).find('.item-video, .video-item, .thumb-block, .p-v-thumb, div[class*="item"]');
             var found = 0;
+            // Создаем временный элемент для парсинга HTML
+            var dom = $($.parseHTML(str));
+            var cards = dom.find('.item-video, .video-item, .thumb-block, .p-v-thumb');
 
             cards.each(function () {
                 var $this = $(this);
@@ -80,27 +85,32 @@
             if (found > 0) {
                 Lampa.Controller.enable('content');
             } else {
-                this.empty('Не удалось найти видео на странице. Возможно, изменилась верстка сайта.');
+                this.empty('На странице не найдено видео. Селекторы сайта изменились.');
             }
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Извлекаю поток...');
-            network.silent(proxy + data.url, function (html) {
-                var video_url = '';
-                // Поиск ссылки в скриптах
-                var match = html.match(/"video_url":"(.*?)"/) || 
-                            html.match(/video_url:\s*'(.*?)'/) ||
-                            html.match(/source\s*src="(.*?)"/);
+            Lampa.Noty.show('Извлекаю видео...');
+            $.ajax({
+                url: proxy + data.url,
+                method: 'GET',
+                dataType: 'text',
+                success: function(html) {
+                    var video_url = '';
+                    // Поиск ссылки в скриптах сайта
+                    var match = html.match(/"video_url":"(.*?)"/) || 
+                                html.match(/video_url:\s*'(.*?)'/) ||
+                                html.match(/source\s*src="(.*?)"/);
 
-                if (match) video_url = match[1].replace(/\\/g, '');
+                    if (match) video_url = match[1].replace(/\\/g, '');
 
-                if (video_url) {
-                    if (video_url.startsWith('//')) video_url = 'https:' + video_url;
-                    Lampa.Player.play({ url: video_url, title: data.title });
-                    Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
-                } else {
-                    Lampa.Noty.show('Ссылка не найдена. Попробуйте другое видео.');
+                    if (video_url) {
+                        if (video_url.startsWith('//')) video_url = 'https:' + video_url;
+                        Lampa.Player.play({ url: video_url, title: data.title });
+                        Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
+                    } else {
+                        Lampa.Noty.show('Ссылка на видео не найдена.');
+                    }
                 }
             });
         };
