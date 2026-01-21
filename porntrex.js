@@ -1,13 +1,13 @@
 (function () {
     'use strict';
 
-    // Конструктор компонента Porntrex
+    // Конструктор компонента
     function Porntrex(object) {
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({mask: true, over: true});
         var items = [];
-        var html = $('<div></div>');
-        var body = $('<div class="category-full"></div>');
+        var html = $('<div class="category-full"></div>');
+        var body = $('<div class="category-full__body"></div>');
         var wait;
         var host = 'https://www.porntrex.com';
         var proxy = 'https://cors.lampa.stream/';
@@ -15,9 +15,12 @@
         this.create = function () {
             var _this = this;
             wait = Lampa.Template.get('loader');
-            html.append(wait);
+            
+            // Важно: в новых версиях Lampa структура должна быть четкой
             html.append(scroll.render());
+            scroll.append(wait);
             scroll.append(body);
+            
             return html;
         };
 
@@ -30,7 +33,7 @@
                 _this.parse(str);
             }, function () {
                 if (wait) wait.remove();
-                Lampa.Noty.show('Ошибка загрузки данных');
+                Lampa.Noty.show('Ошибка сети Porntrex');
             });
         };
 
@@ -56,8 +59,6 @@
                         var card = Lampa.Template.get('card', {title: card_data.title});
                         card.addClass('card--collection');
                         card.find('.card__img').attr('src', card_data.img);
-                        
-                        // Если в шаблоне нет card__age, добавим текст внизу
                         if(card.find('.card__age').length) card.find('.card__age').text(card_data.time);
 
                         card.on('hover:enter', function () {
@@ -68,8 +69,6 @@
                         items.push(card);
                     }
                 });
-                
-                // Включаем контроллер, чтобы можно было перемещаться пультом
                 Lampa.Controller.enable('content');
             } else {
                 body.append('<div class="empty">Ничего не найдено</div>');
@@ -77,7 +76,7 @@
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Поиск потока...');
+            Lampa.Noty.show('Поиск видео...');
             network.silent(proxy + data.url, function (html) {
                 var video_url = '';
                 var config = html.match(/flashvars\s*=\s*({.*?});/i);
@@ -102,7 +101,7 @@
                         Lampa.Controller.toggle('content');
                     });
                 } else {
-                    Lampa.Noty.show('Видео недоступно');
+                    Lampa.Noty.show('Поток не найден');
                 }
             });
         };
@@ -118,29 +117,30 @@
         };
     }
 
-    // Регистрация плагина в Lampa
     function init() {
-        // Регистрируем компонент ПЕРЕД созданием пункта меню
+        // 1. Регистрируем компонент
         Lampa.Component.add('porntrex', Porntrex);
 
+        // 2. Создаем пункт меню (только один раз в основной список)
         var menu_item = $('<li class="menu__item selector" data-action="porntrex">' +
             '<div class="menu__ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 16.5V7.5L16 12L10 16.5ZM12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor"/></svg></div>' +
             '<div class="menu__text">Porntrex</div>' +
         '</li>');
 
         menu_item.on('hover:enter', function () {
+            // Исправленный вызов Activity
             Lampa.Activity.push({
-                url: '',
                 title: 'Porntrex',
-                component: 'porntrex', // имя компонента, который мы зарегистрировали выше
-                page: 1
+                component: 'porntrex',
+                page: 1,
+                method: 'all' // указываем метод для инициализации
             });
         });
 
-        $('.menu .menu__list').append(menu_item);
+        // Добавляем только в ПЕРВЫЙ найденный список (основное меню)
+        $('.menu .menu__list').first().append(menu_item);
     }
 
-    // Ждем готовности приложения
     if (window.appready) init();
     else Lampa.Listener.follow('app', function (e) {
         if (e.type == 'ready') init();
