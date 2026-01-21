@@ -7,11 +7,12 @@
         var items = [];
         var html = $('<div class="category-full"></div>');
         var body = $('<div class="category-full__body"></div>');
+        
+        // Попробуем сменить зеркало/прокси, если стандартный cors не тянет
         var host = 'https://www.porntrex.com';
         var proxy = 'https://cors.lampa.stream/';
 
         this.create = function () {
-            var _this = this;
             if (this.activity && this.activity.loader) this.activity.loader(true);
             html.append(scroll.render());
             scroll.append(body);
@@ -21,110 +22,85 @@
 
         this.load = function () {
             var _this = this;
-            // ИСПРАВЛЕНИЕ: Новые пути Porntrex. Если нет поиска, используем /videos/
-            var path = object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/videos/';
-            var url = proxy + host + path + '?p=' + (object.page || 1);
+            // Используем самый простой путь, который обычно не выдает 404
+            var url = proxy + host + (object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/') + '?p=' + (object.page || 1);
 
             network.silent(url, function (str) {
                 if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                _this.parse(str);
-            }, function () {
-                // Если /videos/ выдал 404, пробуем главную
-                if (!object.query) {
-                    _this.tryAlternative();
+                
+                // Проверка: пришел ли HTML или ошибка прокси
+                if (typeof str === 'string' && str.indexOf('<html') !== -1) {
+                    _this.parse(str);
                 } else {
-                    if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                    Lampa.Noty.show('Porntrex недоступен (404)');
+                    _this.empty('Сайт вернул пустой ответ или заблокирован прокси.');
                 }
+            }, function (err) {
+                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
+                _this.empty('Ошибка сети: ' + (err.status || 'Неизвестно'));
             });
         };
 
-        this.tryAlternative = function() {
-            var _this = this;
-            network.silent(proxy + host + '/?p=' + (object.page || 1), function(str) {
-                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                _this.parse(str);
-            });
+        this.empty = function(msg) {
+            body.append('<div class="empty">' + msg + '</div>');
         };
 
         this.parse = function (str) {
             var _this = this;
-            // Обновленные селекторы: сайт часто использует thumb-block или просто video-item
-            var cards = $(str).find('.item-video, .video-item, .thumb-block, .p-v-thumb');
+            // Максимально широкий поиск карточек
+            var cards = $(str).find('.item-video, .video-item, .thumb-block, .p-v-thumb, div[class*="item"]');
+            var found = 0;
 
-            if (cards.length > 0) {
-                cards.each(function () {
-                    var $this = $(this);
-                    var link = $this.find('a[href*="/video/"]').first();
-                    var img = $this.find('img').attr('data-src') || $this.find('img').attr('src');
-                    var time = $this.find('.duration, .time, .t-length').text().trim();
+            cards.each(function () {
+                var $this = $(this);
+                var link = $this.find('a[href*="/video/"]').first();
+                var img = $this.find('img').attr('data-src') || $this.find('img').attr('src');
+                var title = link.attr('title') || $this.find('.title, .name').text();
 
-                    if (link.attr('href')) {
-                        var card_data = {
-                            title: link.attr('title') || $this.find('.title, .name').text().trim() || 'Video',
-                            url: host + link.attr('href'),
-                            img: img,
-                            time: time
-                        };
+                if (link.attr('href') && title) {
+                    found++;
+                    var card_data = {
+                        title: title.trim(),
+                        url: host + link.attr('href'),
+                        img: img
+                    };
 
-                        var card = Lampa.Template.get('card', {title: card_data.title});
-                        card.addClass('card--collection');
-                        card.find('.card__img').attr('src', card_data.img);
-                        
-                        if (card_data.time) {
-                            var age = card.find('.card__age');
-                            if (age.length) age.text(card_data.time);
-                            else card.find('.card__view').after('<div class="card__age">' + card_data.time + '</div>');
-                        }
+                    var card = Lampa.Template.get('card', {title: card_data.title});
+                    card.addClass('card--collection');
+                    card.find('.card__img').attr('src', card_data.img);
+                    
+                    card.on('hover:enter', function () {
+                        _this.play(card_data);
+                    });
 
-                        card.on('hover:enter', function () {
-                            _this.play(card_data);
-                        });
+                    body.append(card);
+                    items.push(card);
+                }
+            });
 
-                        body.append(card);
-                        items.push(card);
-                    }
-                });
+            if (found > 0) {
                 Lampa.Controller.enable('content');
             } else {
-                body.append('<div class="empty">Контент не найден. Попробуйте позже.</div>');
+                this.empty('Не удалось найти видео на странице. Возможно, изменилась верстка сайта.');
             }
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Получение ссылки...');
+            Lampa.Noty.show('Извлекаю поток...');
             network.silent(proxy + data.url, function (html) {
                 var video_url = '';
-                
-                // Ищем все возможные варианты ссылок в скриптах
-                var config = html.match(/flashvars\s*=\s*({.*?});/i);
-                if (config) {
-                    try {
-                        var parsed = JSON.parse(config[1]);
-                        video_url = parsed.video_url || parsed.url || parsed.video_alt_url;
-                    } catch (e) {}
-                }
-                
-                if (!video_url) {
-                    // Резервный поиск через регулярки
-                    var match = html.match(/"video_url":"(.*?)"/) || 
-                                html.match(/video_url:\s*'(.*?)'/) ||
-                                html.match(/source\s*src="(.*?)"/);
-                    if (match) video_url = match[1].replace(/\\/g, '');
-                }
+                // Поиск ссылки в скриптах
+                var match = html.match(/"video_url":"(.*?)"/) || 
+                            html.match(/video_url:\s*'(.*?)'/) ||
+                            html.match(/source\s*src="(.*?)"/);
+
+                if (match) video_url = match[1].replace(/\\/g, '');
 
                 if (video_url) {
                     if (video_url.startsWith('//')) video_url = 'https:' + video_url;
-                    
-                    Lampa.Player.play({
-                        url: video_url,
-                        title: data.title
-                    });
-                    Lampa.Player.callback(function () {
-                        Lampa.Controller.toggle('content');
-                    });
+                    Lampa.Player.play({ url: video_url, title: data.title });
+                    Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
                 } else {
-                    Lampa.Noty.show('Не удалось извлечь ссылку на видео');
+                    Lampa.Noty.show('Ссылка не найдена. Попробуйте другое видео.');
                 }
             });
         };
@@ -136,7 +112,6 @@
             network.clear();
             scroll.destroy();
             html.remove();
-            items = [];
         };
     };
 
