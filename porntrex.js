@@ -1,35 +1,18 @@
 (function () {
     'use strict';
 
-    var PorntrexApi = {
-        host: 'https://www.porntrex.com',
-        
-        getHtml: function(url, success, error) {
-            var net = new Lampa.Reguest();
-            
-            // Добавляем заголовки как в sena.js для обхода защиты
-            var options = {
-                dataType: 'text',
-                timeout: 15000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                    'Referer': 'https://www.porntrex.com/',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-                }
-            };
-
-            // Используем native запрос
-            net.native(url, function(str) {
-                if (str && str.length > 500) success(str); // Проверка, что пришел HTML, а не пустая строка
-                else error();
-            }, error, false, options);
-        }
+    // Используем прокси-сервер, который работает как мост (Bridge)
+    // Он забирает данные на стороне сервера и отдает их нам без CORS ограничений
+    var Proxy = {
+        api: 'https://api.allorigins.win/get?url=',
+        host: 'https://www.porntrex.com'
     };
 
     window.Porntrex = function (object) {
+        var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({mask: true, over: true});
-        var html = $('<div class="category-full"></div>');
         var body = $('<div class="category-full__body"></div>');
+        var html = $('<div class="category-full"></div>');
 
         this.create = function () {
             html.append(scroll.render());
@@ -39,12 +22,12 @@
 
         this.start = function () {
             var _this = this;
-            Lampa.Loading.start();
+            Lampa.Background.immediately('');
             
-            // Кнопка Меню
-            var menu_card = Lampa.Template.get('card', {title: 'МЕНЮ / ПОИСК'});
+            // Плитка меню (всегда первая)
+            var menu_card = Lampa.Template.get('card', {title: 'МЕНЮ И ПОИСК'});
             menu_card.addClass('card--collection');
-            menu_card.find('.card__img').css('background', '#c41c1c').attr('src', ''); 
+            menu_card.find('.card__img').css('background', '#e60000');
             menu_card.on('hover:enter', function() { _this.showFilter(); });
             body.append(menu_card);
 
@@ -54,27 +37,25 @@
         this.showFilter = function() {
             var _this = this;
             Lampa.Select.show({
-                title: 'Разделы Porntrex',
+                title: 'Разделы',
                 items: [
-                    {title: '🔍 Поиск видео', search: true},
-                    {title: '🆕 Свежее', url: '/videos/'},
-                    {title: '📈 Популярное', url: '/most-popular/'},
-                    {title: '🏠 Домашнее', url: '/categories/homemade/'},
-                    {title: '👩 Milf', url: '/categories/milf/'},
-                    {title: '🔞 Anal', url: '/categories/anal/'}
+                    {title: '🔍 Поиск', search: true},
+                    {title: '🔥 Новинки', url: '/videos/'},
+                    {title: '⭐ Популярные', url: '/most-popular/'},
+                    {title: '👩 Категории', categories: true}
                 ],
                 onSelect: function(item) {
                     if (item.search) {
                         Lampa.Input.edit({title: 'Поиск', value: '', free: true}, function(val) {
                             if (val) {
                                 object.url = '/search/' + encodeURIComponent(val) + '/';
-                                object.page = 1;
                                 Lampa.Activity.replace(object);
                             }
                         });
+                    } else if (item.categories) {
+                        _this.showCategories();
                     } else {
                         object.url = item.url;
-                        object.page = 1;
                         Lampa.Activity.replace(object);
                     }
                 },
@@ -82,35 +63,62 @@
             });
         };
 
+        this.showCategories = function() {
+            Lampa.Select.show({
+                title: 'Категории',
+                items: [
+                    {title: 'Anal', url: '/categories/anal/'},
+                    {title: 'Asian', url: '/categories/asian/'},
+                    {title: 'Milf', url: '/categories/milf/'},
+                    {title: 'Ebony', url: '/categories/ebony/'},
+                    {title: 'Homemade', url: '/categories/homemade/'}
+                ],
+                onSelect: function(item) {
+                    object.url = item.url;
+                    Lampa.Activity.replace(object);
+                }
+            });
+        };
+
         this.load = function () {
             var _this = this;
+            Lampa.Loading.start();
+            
             var path = object.url || '/videos/';
-            var fullUrl = PorntrexApi.host + path + '?p=' + (object.page || 1);
-
-            PorntrexApi.getHtml(fullUrl, function(str) {
+            var targetUrl = Proxy.host + path + '?p=' + (object.page || 1);
+            
+            // Делаем запрос через AllOrigins с принудительным JSON обертыванием
+            // Это гарантированно обходит CORS браузера
+            network.silent(Proxy.api + encodeURIComponent(targetUrl), function(json) {
                 Lampa.Loading.stop();
-                _this.parse(str);
+                if (json && json.contents) {
+                    _this.parse(json.contents);
+                } else {
+                    _this.empty('Сервер прокси не вернул данные.');
+                }
             }, function() {
                 Lampa.Loading.stop();
-                Lampa.Noty.show('Блокировка провайдером. Включите VPN или прокси в Лампе.');
+                _this.empty('Сетевая ошибка прокси. Попробуйте без VPN.');
             });
         };
 
         this.parse = function (str) {
             var _this = this;
-            var dom = $($.parseHTML(str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")));
+            // Убираем скрипты и мусор перед парсингом
+            var clean = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+            var dom = $($.parseHTML(clean));
             var cards = dom.find('.video-item, .item-video, .thumb-block');
 
             cards.each(function () {
                 var $this = $(this);
                 var a = $this.find('a[href*="/video/"]').first();
                 var img = $this.find('img').attr('data-src') || $this.find('img').attr('src');
-                var title = a.attr('title') || $this.find('.title').text();
+                var title = a.attr('title') || $this.find('.title, .name').text();
 
                 if (a.attr('href') && title) {
                     var card_data = {
                         title: title.trim(),
-                        url: PorntrexApi.host + a.attr('href'),
+                        url: Proxy.host + a.attr('href'),
                         img: img
                     };
                     var card = Lampa.Template.get('card', {title: card_data.title});
@@ -119,43 +127,48 @@
                         var thumb = card_data.img.startsWith('//') ? 'https:' + card_data.img : card_data.img;
                         card.find('.card__img').attr('src', thumb);
                     }
-                    
                     card.on('hover:enter', function () { _this.play(card_data); });
                     body.append(card);
                 }
             });
 
             if (cards.length > 0) {
-                var next = $('<div class="category-full__next selector"><span>Загрузить еще</span></div>');
+                var next = $('<div class="category-full__next selector"><span>Показать еще</span></div>');
                 next.on('hover:enter', function() {
                     object.page = (object.page || 1) + 1;
                     Lampa.Activity.replace(object);
                 });
                 body.append(next);
+            } else if (body.children().length <= 1) {
+                this.empty('На этой странице видео не найдены.');
             }
             Lampa.Controller.enable('content');
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Стриминг...');
-            PorntrexApi.getHtml(data.url, function(html) {
-                // Извлекаем прямую ссылку на MP4
-                var match = html.match(/"video_url":"(.*?)"/) || html.match(/source\s*src="(.*?)"/);
-                var stream = match ? match[1].replace(/\\/g, '') : '';
-                
-                if (stream) {
-                    Lampa.Player.play({
-                        url: stream.startsWith('//') ? 'https:' + stream : stream,
-                        title: data.title
-                    });
-                } else {
-                    Lampa.Noty.show('Не удалось найти видео-поток');
+            Lampa.Noty.show('Загрузка потока...');
+            network.silent(Proxy.api + encodeURIComponent(data.url), function(json) {
+                if (json && json.contents) {
+                    var match = json.contents.match(/"video_url":"(.*?)"/) || json.contents.match(/source\s*src="(.*?)"/);
+                    var stream = match ? match[1].replace(/\\/g, '') : '';
+                    if (stream) {
+                        Lampa.Player.play({
+                            url: stream.startsWith('//') ? 'https:' + stream : stream,
+                            title: data.title
+                        });
+                    } else {
+                        Lampa.Noty.show('Ссылка на видео не найдена');
+                    }
                 }
-            }, function() { Lampa.Noty.show('Ошибка парсинга'); });
+            });
+        };
+
+        this.empty = function(m) {
+            body.append('<div class="empty">'+m+'</div>');
         };
 
         this.render = function () { return html; };
-        this.destroy = function () { scroll.destroy(); html.remove(); };
+        this.destroy = function () { scroll.destroy(); html.remove(); network.clear(); };
     };
 
     function init() {
