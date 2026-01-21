@@ -1,69 +1,162 @@
 (function () {
     'use strict';
 
-    var Porntrex = {
-        name: 'Porntrex',
-        main_url: 'https://www.porntrex.com',
-        
-        // Метод поиска
-        search: function (query, page, callback) {
-            var network = new Lampa.Reguest();
-            // Используем прокси для обхода блокировок
-            var url = 'https://cors.lampa.stream/' + this.main_url + '/search/' + encodeURIComponent(query) + '/?p=' + page;
+    function Porntrex(object) {
+        var network = new Lampa.Reguest();
+        var scroll = new Lampa.Scroll({mask: true, over: true});
+        var items = [];
+        var html = $('<div></div>');
+        var body = $('<div class="category-full"></div>');
+        var info;
+        var last;
+        var wait;
 
-            network.silent(url, function (html) {
-                var items = [];
-                // Парсим HTML ответ
-                var containers = $(html).find('.item-video, .video-item'); 
-                
-                containers.each(function () {
+        // Настройки адресов
+        var host = 'https://www.porntrex.com';
+        var proxy = 'https://cors.lampa.stream/';
+
+        this.create = function () {
+            var _this = this;
+            
+            // Создаем экран ожидания
+            wait = Lampa.Template.get('loader');
+            html.append(wait);
+            html.append(scroll.render());
+            scroll.append(body);
+
+            // Обработка фокуса на плитке (показ названия)
+            scroll.onWheel = function () {
+                Lampa.Focus.set(body);
+            };
+
+            return html;
+        };
+
+        this.start = function () {
+            this.load();
+        };
+
+        this.load = function () {
+            var _this = this;
+            var url = proxy + host + (object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/most-recent/') + '?p=' + object.page;
+
+            network.silent(url, function (str) {
+                wait.remove();
+                _this.parse(str);
+            }, function () {
+                Lampa.Noty.show('Ошибка загрузки Porntrex');
+            });
+        };
+
+        this.parse = function (str) {
+            var _this = this;
+            var cards = $(str).find('.item-video, .video-item, .thumb-block');
+
+            if (cards.length > 0) {
+                cards.each(function () {
                     var $this = $(this);
-                    var link = $this.find('a').attr('href');
-                    var title = $this.find('a').attr('title') || $this.find('.title').text();
+                    var link = $this.find('a').first();
                     var img = $this.find('img').attr('data-src') || $this.find('img').attr('src');
-                    var time = $this.find('.duration, .time').text();
+                    var time = $this.find('.duration, .time').text().trim();
 
-                    if (link && title) {
-                        items.push({
-                            title: title.trim(),
-                            url: link.startsWith('http') ? link : 'https://www.porntrex.com' + link,
+                    if (link.attr('href')) {
+                        var card_data = {
+                            title: link.attr('title') || $this.find('.title').text().trim(),
+                            url: host + link.attr('href'),
                             img: img,
-                            quality: 'HD',
-                            time: time.trim()
+                            time: time
+                        };
+
+                        // Создаем визуальную плитку в стиле Lampa
+                        var card = Lampa.Template.get('card', {title: card_data.title});
+                        card.addClass('card--collection');
+                        card.find('.card__img').attr('src', card_data.img);
+                        card.find('.card__age').text(card_data.time);
+
+                        card.on('hover:focus', function () {
+                            last = card[0];
                         });
+
+                        card.on('hover:enter', function () {
+                            _this.play(card_data);
+                        });
+
+                        body.append(card);
+                        items.push(card);
                     }
                 });
 
-                callback(items);
-            }, function () {
-                callback([]); // Ошибка сети
-            });
-        },
+                Lampa.Controller.enable('content');
+            } else {
+                body.append('<div class="empty">Ничего не найдено</div>');
+            }
+        };
 
-        // Метод получения ссылки на видео файл
-        getVideo: function (video_url, callback) {
-            var network = new Lampa.Reguest();
-            network.silent('https://cors.lampa.stream/' + video_url, function (html) {
-                // Ищем скрипты, содержащие flashvars или ссылки на видео
-                var video_match = html.match(/video_url:\s*'(.*?)'/i) || 
-                                 html.match(/"file":\s*"(.*?)"/i) ||
-                                 html.match(/source\s*src="(.*?)"/i);
+        this.play = function (data) {
+            Lampa.Noty.show('Извлекаю видео...');
+            network.silent(proxy + data.url, function (html) {
+                var video_url = '';
+                var config = html.match(/flashvars\s*=\s*({.*?});/i);
+                if (config) {
+                    try {
+                        var parsed = JSON.parse(config[1]);
+                        video_url = parsed.video_url || parsed.url;
+                    } catch (e) {}
+                }
 
-                if (video_match && video_match[1]) {
-                    var raw_url = video_match[1].replace(/\\/g, '');
-                    callback({
-                        path: raw_url,
-                        type: 'video/mp4'
+                if (video_url) {
+                    // Запуск плеера Lampa
+                    Lampa.Player.play({
+                        url: video_url,
+                        title: data.title
+                    });
+                    Lampa.Player.callback(function () {
+                        Lampa.Controller.toggle('content');
                     });
                 } else {
-                    callback(false);
+                    Lampa.Noty.show('Не удалось найти видео-поток');
                 }
-            }, function () {
-                callback(false);
             });
-        }
-    };
+        };
 
-    // Интеграция в Lampa (пример вызова)
-    // Lampa.Component.add('porntrex_parser', Porntrex);
+        this.pause = function () {};
+        this.stop = function () {};
+        this.render = function () { return html; };
+        this.destroy = function () {
+            network.clear();
+            scroll.destroy();
+            html.remove();
+            items = [];
+        };
+    }
+
+    // Регистрация в меню Lampa
+    function init() {
+        // Добавляем пункт в боковое меню
+        var menu_item = $('<li class="menu__item selector" data-action="porntrex">' +
+            '<div class="menu__ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 16.5V7.5L16 12L10 16.5Z" fill="white"/></svg></div>' +
+            '<div class="menu__text">Porntrex</div>' +
+        '</li>');
+
+        $('.menu .menu__list').append(menu_item);
+
+        // Обработка клика по меню
+        menu_item.on('hover:enter', function () {
+            Lampa.Activity.push({
+                url: '',
+                title: 'Porntrex',
+                component: 'porntrex',
+                page: 1
+            });
+        });
+
+        // Регистрируем компонент в системе
+        Lampa.Component.add('porntrex', Porntrex);
+    }
+
+    if (window.appready) init();
+    else Lampa.Listener.follow('app', function (e) {
+        if (e.type == 'ready') init();
+    });
+
 })();
