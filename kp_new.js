@@ -1,149 +1,90 @@
 (function () {
     'use strict';
 
+    console.log('--- KP PLUGIN: SCRIPT START ---');
+
     function rating_kp_imdb(card) {
-        // ИСПРАВЛЕНО: Было Reguest, стало Request
-        var network = new Lampa.Request(); 
-        var clean_title = kpCleanTitle(card.title);
-        var search_date = card.release_date || card.first_air_date || card.last_air_date || '0000';
-        var search_year = parseInt((search_date + '').slice(0, 4));
-        var orig = card.original_title || card.original_name;
+        console.log('--- KP PLUGIN: Searching rating for:', card.title || card.name);
         
-        // ИСПРАВЛЕНО: Добавлен прокси для работы в браузере
+        var network = new Lampa.Request(); 
+        var clean_title = card.title || card.name;
         var kp_prox = 'https://cors.lampa.stream/'; 
         
         var params = {
             id: card.id,
             url: kp_prox + 'https://kinopoiskapiunofficial.tech/',
-            rating_url: kp_prox + 'https://rating.kinopoisk.ru/',
-            headers: {
-                'X-API-KEY': '2a4a0808-81a3-40ae-b0d3-e11335ede616'
-            },
-            cache_time: 60 * 60 * 24 * 1000 
+            headers: { 'X-API-KEY': '2a4a0808-81a3-40ae-b0d3-e11335ede616' },
+            cache_time: 86400000 
         };
 
-        getRating();
-
-        function getRating() {
-            var movieRating = _getCache(params.id);
-            if (movieRating) {
-                return _showRating(movieRating[params.id]);
-            } else {
-                searchFilm();
-            }
-        }
-
-        function searchFilm() {
-            var url = params.url;
-            var url_by_title = Lampa.Utils.addUrlComponent(url + 'api/v2.1/films/search-by-keyword', 'keyword=' + encodeURIComponent(clean_title));
-            
-            if (card.imdb_id) url = Lampa.Utils.addUrlComponent(url + 'api/v2.2/films', 'imdbId=' + encodeURIComponent(card.imdb_id));
-            else url = url_by_title;
-
-            network.clear();
-            network.timeout(15000);
-            network.silent(url, function (json) {
-                if (json.items && json.items.length) chooseFilm(json.items);
-                else if (json.films && json.films.length) chooseFilm(json.films);
-                else if (url !== url_by_title) {
-                    network.clear();
-                    network.silent(url_by_title, function (json) {
-                        if (json.items && json.items.length) chooseFilm(json.items);
-                        else if (json.films && json.films.length) chooseFilm(json.films);
-                        else chooseFilm([]);
-                    }, function (a, c) {
-                        showError(network.errorDecode(a, c));
-                    }, false, { headers: params.headers });
-                } else chooseFilm([]);
-            }, function (a, c) {
-                showError(network.errorDecode(a, c));
-            }, false, { headers: params.headers });
-        }
-
-        function chooseFilm(items) {
-            if (items && items.length) {
-                var is_sure = false;
-                var id = items[0].kp_id || items[0].kinopoisk_id || items[0].kinopoiskId || items[0].filmId;
+        // 1. Пытаемся найти фильм по названию
+        var search_url = params.url + 'api/v2.1/films/search-by-keyword?keyword=' + encodeURIComponent(clean_title);
+        
+        network.silent(search_url, function (json) {
+            var film = (json.films || json.items || [])[0];
+            if (film) {
+                var kp_id = film.filmId || film.kinopoiskId;
+                console.log('--- KP PLUGIN: Found ID:', kp_id);
                 
-                // Упрощенная логика: берем первый найденный результат
-                if (id) {
-                    fetchFinalRating(id);
-                }
+                // 2. Получаем детальный рейтинг
+                network.silent(params.url + 'api/v2.2/films/' + kp_id, function (data) {
+                    console.log('--- KP PLUGIN: Ratings received:', data.ratingKinopoisk);
+                    _showRating({
+                        kp: data.ratingKinopoisk,
+                        imdb: data.ratingImdb
+                    });
+                }, function() { console.log('--- KP PLUGIN: Detail request failed'); }, false, { headers: params.headers });
+            } else {
+                console.log('--- KP PLUGIN: Movie not found on KP');
+                $('.wait_rating').remove();
             }
-        }
-
-        function fetchFinalRating(id) {
-            network.clear();
-            network.timeout(15000);
-            network.silent(params.url + 'api/v2.2/films/' + id, function (data) {
-                var movieRating = _setCache(params.id, {
-                    kp: data.ratingKinopoisk,
-                    imdb: data.ratingImdb,
-                    timestamp: new Date().getTime()
-                });
-                _showRating(movieRating);
-            }, function (a, c) {
-                showError(network.errorDecode(a, c));
-            }, false, { headers: params.headers });
-        }
-
-        // Вспомогательные функции очистки заголовков
-        function cleanTitle(str){ return str.replace(/[\s.,:;’'`!?]+/g, ' ').trim(); }
-        function kpCleanTitle(str){ return cleanTitle(str).replace(/^[ \/\\]+/, '').replace(/[ \/\\]+$/, '').replace(/\+( *[+\/\\])+/g, '+'); }
-
-        function _getCache(movie) {
-            var cache = Lampa.Storage.cache('kp_rating', 500, {});
-            if (cache[movie]) {
-                if ((new Date().getTime() - cache[movie].timestamp) > params.cache_time) return false;
-                return cache;
-            }
-            return false;
-        }
-
-        function _setCache(movie, data) {
-            var cache = Lampa.Storage.cache('kp_rating', 500, {});
-            cache[movie] = data;
-            Lampa.Storage.set('kp_rating', cache);
-            return data;
-        }
+        }, function() { console.log('--- KP PLUGIN: Search request failed'); }, false, { headers: params.headers });
 
         function _showRating(data) {
-            if (data) {
-                var kp_rating = data.kp || '0.0';
-                var imdb_rating = data.imdb || '0.0';
-                var render = Lampa.Activity.active().activity.render();
-                $('.wait_rating', render).remove();
-                
-                // Ищем или создаем контейнеры рейтинга
-                var info = $('.info__rate', render);
-                if (!$('.rate--kp', render).length) {
-                    info.append('<div class="rate--kp"><span>КП</span><div>' + kp_rating + '</div></div>');
-                    info.append('<div class="rate--imdb"><span>IMDb</span><div>' + imdb_rating + '</div></div>');
-                } else {
-                    $('.rate--kp', render).removeClass('hide').find('> div').text(kp_rating);
-                    $('.rate--imdb', render).removeClass('hide').find('> div').text(imdb_rating);
-                }
-            }
-        }
-        
-        function showError(error) {
-            console.log('Rating Error:', error);
+            var render = Lampa.Activity.active().activity.render();
+            $('.wait_rating', render).remove();
+            
+            var kp = data.kp || '0.0';
+            var imdb = data.imdb || '0.0';
+
+            // Ищем контейнер для вставки
+            var container = $('.info__rate', render);
+            if(!container.length) container = $('.full-start__items', render);
+
+            console.log('--- KP PLUGIN: Injecting to UI...');
+            
+            var html = $(`
+                <div class="rate--kp" style="margin-right: 15px; background: #f50; border-radius: 4px; padding: 2px 6px;">
+                    <span style="font-size: 0.8em; opacity: 0.7;">КП</span>
+                    <div style="font-weight: bold;">${kp}</div>
+                </div>
+                <div class="rate--imdb" style="background: #f3ce13; color: #000; border-radius: 4px; padding: 2px 6px;">
+                    <span style="font-size: 0.8em; opacity: 0.7;">IMDb</span>
+                    <div style="font-weight: bold;">${imdb}</div>
+                </div>
+            `);
+            
+            container.append(html);
         }
     }
 
     function startPlugin() {
-        window.rating_plugin = true;
+        window.rating_plugin_loaded = true;
+        console.log('--- KP PLUGIN: Listener started');
+
         Lampa.Listener.follow('full', function (e) {
-            // ИСПРАВЛЕНО: Было complite, стало complete
-            if (e.type == 'complete') { 
+            // Слушаем оба варианта события (с ошибкой и без)
+            if (e.type == 'complete' || e.type == 'complite') {
+                console.log('--- KP PLUGIN: Full card opened');
                 var render = e.object.activity.render();
-                if (!$('.wait_rating', render).length) {
-                    $('.info__rate', render).after('<div style="width:2em;margin-top:1em;margin-right:1em" class="wait_rating"><div class="broadcast__scan"><div></div></div><div>');
+                
+                if (!$('.wait_rating', render).length && !$('.rate--kp', render).length) {
+                    $('.info__rate', render).after('<div class="wait_rating" style="margin-left: 10px;">📊</div>');
                     rating_kp_imdb(e.data.movie);
                 }
             }
         });
     }
 
-    if (!window.rating_plugin) startPlugin();
+    if (!window.rating_plugin_loaded) startPlugin();
 })();
