@@ -33,47 +33,38 @@
         this.start = function () {
             var _this = this;
             
-            // Безопасная установка заголовка
-            try {
-                Lampa.Head.title('Porntrex');
-            } catch(e) {}
-
-            // Создаем кнопку фильтров только если Head доступен
-            setTimeout(function() {
-                _this.setupHeader();
-                if (_this.activity && _this.activity.loader) _this.activity.loader(true);
-                _this.load();
-            }, 100);
-        };
-
-        this.setupHeader = function() {
-            var _this = this;
-            var filter_btn = $('<div class="head__action selector head__filter"><svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" fill="currentColor"/></svg></div>');
-            
-            filter_btn.on('click', function() {
+            // Добавляем кнопку вызова меню первым элементом
+            var menu_btn = Lampa.Template.get('card', {title: '🔍 МЕНЮ И ПОИСК'});
+            menu_btn.addClass('card--collection');
+            menu_btn.find('.card__img').css('background', '#3d3d3d').attr('src', ''); 
+            menu_btn.on('hover:enter', function () {
                 _this.renderFilter();
             });
+            body.append(menu_btn);
 
-            // Добавляем в шапку Lampa
-            Lampa.Head.add(filter_btn);
+            // Загрузка контента
+            setTimeout(function() {
+                if (_this.activity && _this.activity.loader) _this.activity.loader(true);
+                _this.load();
+            }, 200);
         };
 
         this.renderFilter = function() {
             var _this = this;
             var select_items = [
-                { title: '🔍 Поиск', search: true }
+                { title: '🔍 Найти видео (Поиск)', search: true }
             ];
 
             sort_filters.forEach(function(f, i) {
-                select_items.push({ title: f.title, filter_id: i, selected: (object.filter == i && object.category === null) });
+                select_items.push({ title: '🔥 ' + f.title, filter_id: i });
             });
 
             categories.forEach(function(c, i) {
-                select_items.push({ title: '📁 ' + c.title, category_id: i, selected: (object.category == i) });
+                select_items.push({ title: '📁 ' + c.title, category_id: i });
             });
 
             Lampa.Select.show({
-                title: 'Меню Porntrex',
+                title: 'Porntrex Меню',
                 items: select_items,
                 onSelect: function(item) {
                     if (item.search) {
@@ -117,17 +108,16 @@
                 if (str && str.indexOf('<html') !== -1) {
                     _this.parse(str);
                 } else {
-                    _this.empty('Ошибка данных. Нажмите "Вверх" для выбора категорий.');
+                    _this.empty('Контент не получен. Попробуйте нажать на плитку МЕНЮ.');
                 }
             }, function () {
                 if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                _this.empty('Прокси не отвечает. Попробуйте позже.');
+                _this.empty('Ошибка прокси AllOrigins.');
             });
         };
 
         this.parse = function (str) {
             var _this = this;
-            var found = 0;
             var clean_html = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
             var dom = $($.parseHTML(clean_html));
             var cards = dom.find('.video-item, .item-video, .thumb-block, .p-v-thumb, .v-thumb');
@@ -139,7 +129,6 @@
                 var title = link.attr('title') || $this.find('.title, .name').text();
 
                 if (link.attr('href') && title) {
-                    found++;
                     var card_data = { title: title.trim(), url: host + link.attr('href'), img: img };
                     var card = Lampa.Template.get('card', {title: card_data.title});
                     card.addClass('card--collection');
@@ -153,21 +142,17 @@
                 }
             });
 
-            if (found > 0) {
-                var next = $('<div class="category-full__next selector"><span>Показать еще</span></div>');
-                next.on('hover:enter', function() {
-                    object.page++;
-                    Lampa.Activity.replace(object);
-                });
-                body.append(next);
-                Lampa.Controller.enable('content');
-            } else {
-                this.empty('Ничего не найдено.');
-            }
+            var next = $('<div class="category-full__next selector"><span>Показать еще</span></div>');
+            next.on('hover:enter', function() {
+                object.page++;
+                Lampa.Activity.replace(object);
+            });
+            body.append(next);
+            Lampa.Controller.enable('content');
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Поиск видео...');
+            Lampa.Noty.show('Запрос видео...');
             network.silent(proxy + encodeURIComponent(data.url), function(json) {
                 var html = json.contents || '';
                 var match = html.match(/"video_url":"(.*?)"/) || html.match(/video_url:\s*'(.*?)'/) || html.match(/source\s*src="(.*?)"/);
@@ -182,13 +167,12 @@
             });
         };
 
-        this.empty = function(m) { body.empty().append('<div class="empty">'+m+'</div>'); };
+        this.empty = function(m) { body.append('<div class="empty">'+m+'</div>'); };
         this.render = function () { return html; };
         this.destroy = function () { 
             network.clear(); 
             scroll.destroy(); 
             html.remove(); 
-            Lampa.Head.clear(); 
         };
     };
 
