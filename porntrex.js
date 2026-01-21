@@ -10,11 +10,12 @@
         
         var host = 'https://www.porntrex.com';
         
-        // Список прокси для перебора
+        // Расширенный список прокси
         var proxies = [
             'https://cors.lampa.stream/',
             'https://api.allorigins.win/raw?url=',
-            'https://corsproxy.io/?'
+            'https://corsproxy.io/?',
+            'https://thingproxy.freeboard.io/fetch/'
         ];
         var currentProxyIndex = 0;
 
@@ -25,8 +26,12 @@
         };
 
         this.start = function () {
-            if (this.activity && this.activity.loader) this.activity.loader(true);
-            this.load();
+            var _this = this;
+            // ИСПОРАВЛЕНИЕ: Добавляем таймаут, чтобы Lampa успела создать Activity
+            setTimeout(function() {
+                if (_this.activity && _this.activity.loader) _this.activity.loader(true);
+                _this.load();
+            }, 100);
         };
 
         this.load = function () {
@@ -35,32 +40,36 @@
             var proxy = proxies[currentProxyIndex];
             var url = proxy + host + path + '?p=' + (object.page || 1);
 
-            console.log('Porntrex: Trying proxy', proxy);
-
-            network.ajax(url, function (str) {
-                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
-                
-                if (str && typeof str === 'string' && str.indexOf('<html') !== -1) {
-                    _this.parse(str);
-                } else {
+            // Используем нативный метод, чтобы избежать проблем с JSON
+            $.ajax({
+                url: url,
+                method: 'GET',
+                dataType: 'text',
+                timeout: 10000,
+                success: function (str) {
+                    if (_this.activity && _this.activity.loader) _this.activity.loader(false);
+                    
+                    if (str && str.indexOf('<html') !== -1) {
+                        _this.parse(str);
+                    } else {
+                        console.log('Porntrex: Proxy ' + currentProxyIndex + ' returned bad data');
+                        _this.nextProxy();
+                    }
+                },
+                error: function () {
+                    console.log('Porntrex: Proxy ' + currentProxyIndex + ' failed');
                     _this.nextProxy();
                 }
-            }, function () {
-                _this.nextProxy();
-            }, false, { 
-                dataType: 'text',
-                timeout: 8000 // Ждем 8 секунд и переключаем прокси
             });
         };
 
         this.nextProxy = function() {
             currentProxyIndex++;
             if (currentProxyIndex < proxies.length) {
-                console.log('Porntrex: Switching to next proxy...');
                 this.load();
             } else {
                 if (this.activity && this.activity.loader) this.activity.loader(false);
-                this.empty('Все прокси-серверы заблокированы или сайт недоступен.');
+                this.empty('Сайт Porntrex недоступен через все прокси. Попробуйте позже.');
             }
         };
 
@@ -71,8 +80,10 @@
         this.parse = function (str) {
             var _this = this;
             var found = 0;
-            // Убираем всё, что может мешать jQuery
-            var clean_html = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+            // Убираем скрипты и стили для облегчения парсинга
+            var clean_html = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+                                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
+            
             var dom = $($.parseHTML(clean_html));
             var cards = dom.find('.item-video, .video-item, .thumb-block, .p-v-thumb');
 
@@ -106,33 +117,38 @@
             if (found > 0) {
                 Lampa.Controller.enable('content');
             } else {
-                this.empty('Видео на странице не найдены. Возможно, включена защита Cloudflare.');
+                this.empty('Видео не найдены. Возможно, сайт под защитой Cloudflare.');
             }
         };
 
         this.play = function (data) {
             var _this = this;
-            Lampa.Noty.show('Поиск видео-потока...');
+            Lampa.Noty.show('Поиск потока...');
             
-            // Для воспроизведения используем тот же рабочий прокси
-            network.ajax(proxies[currentProxyIndex] + data.url, function(html) {
-                var video_url = '';
-                var match = html.match(/"video_url":"(.*?)"/) || 
-                            html.match(/video_url:\s*'(.*?)'/) ||
-                            html.match(/source\s*src="(.*?)"/);
+            $.ajax({
+                url: proxies[currentProxyIndex] + data.url,
+                method: 'GET',
+                dataType: 'text',
+                success: function(html) {
+                    var video_url = '';
+                    var match = html.match(/"video_url":"(.*?)"/) || 
+                                html.match(/video_url:\s*'(.*?)'/) ||
+                                html.match(/source\s*src="(.*?)"/);
 
-                if (match) video_url = match[1].replace(/\\/g, '');
+                    if (match) video_url = match[1].replace(/\\/g, '');
 
-                if (video_url) {
-                    if (video_url.startsWith('//')) video_url = 'https:' + video_url;
-                    Lampa.Player.play({ url: video_url, title: data.title });
-                    Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
-                } else {
-                    Lampa.Noty.show('Не удалось извлечь прямую ссылку.');
+                    if (video_url) {
+                        if (video_url.startsWith('//')) video_url = 'https:' + video_url;
+                        Lampa.Player.play({ url: video_url, title: data.title });
+                        Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
+                    } else {
+                        Lampa.Noty.show('Ссылка не найдена.');
+                    }
+                },
+                error: function() {
+                    Lampa.Noty.show('Ошибка загрузки страницы видео.');
                 }
-            }, function(){
-                Lampa.Noty.show('Ошибка загрузки страницы видео.');
-            }, false, {dataType: 'text'});
+            });
         };
 
         this.pause = function () {};
