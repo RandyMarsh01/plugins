@@ -1,70 +1,64 @@
 (function () {
     'use strict';
 
-    console.log('KP Rating: Script version 2.0 loaded');
+    // Эта строка СРАЗУ покажет нам, что загрузилась НОВАЯ версия
+    console.log('!!! KP RATING DEBUG: VERSION 3.0 LOADED !!!');
 
-    function startPlugin() {
-        if (window.rating_kp_plugin_loaded) return;
-        window.rating_kp_plugin_loaded = true;
+    function init() {
+        if (window.kp_rating_installed) return;
+        window.kp_rating_installed = true;
 
-        console.log('KP Rating: Plugin monitoring started');
+        console.log('KP RATING: Monitoring started...');
 
-        // Слушаем ВСЕ события в карточке (full)
         Lampa.Listener.follow('full', function (e) {
-            // Логируем тип события, чтобы понять, какое именно у тебя срабатывает
-            console.log('KP Rating: Event detected:', e.type);
+            console.log('KP RATING: Detected event ->', e.type);
 
-            // Реагируем на любой вариант названия события завершения загрузки
             if (e.type == 'complete' || e.type == 'complite' || e.type == 'ready') {
-                console.log('KP Rating: Card ready, fetching data for:', e.data.movie.title || e.data.movie.name);
-                
                 var card = e.data.movie;
                 var render = e.object.activity.render();
                 
-                // Пробуем несколько вариантов контейнеров, где может быть рейтинг
-                var container = $('.info__rate', render);
-                if (!container.length) container = $('.full-start__items', render);
-                if (!container.length) container = render.find('.info__right'); 
+                console.log('KP RATING: Trying to inject rating for:', card.title || card.name);
 
-                if (container.length && !container.find('.kp-rating-custom').length) {
-                    drawRating(card, container);
+                // Ищем место для вставки (пробуем 3 разных варианта)
+                var container = render.find('.info__rate');
+                if (!container.length) container = render.find('.full-start__items');
+                if (!container.length) container = render.find('.info__right');
+
+                if (container.length) {
+                    if (container.find('.kp-rating-tag').length) return;
+
+                    var tag = $('<span class="kp-rating-tag" style="margin-left:10px; color:#f50; font-weight:bold;">КП: ..</span>');
+                    container.append(tag);
+
+                    var network = new Lampa.Request();
+                    var title = card.title || card.name;
+                    var url = 'https://cors.lampa.stream/https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=' + encodeURIComponent(title);
+
+                    network.silent(url, function (json) {
+                        var film = (json.films || [])[0];
+                        if (film && film.rating && film.rating !== 'null') {
+                            console.log('KP RATING: Success!', film.rating);
+                            tag.text('КП: ' + film.rating).css({
+                                'background': '#f50',
+                                'color': '#fff',
+                                'padding': '2px 6px',
+                                'border-radius': '4px'
+                            });
+                        } else {
+                            tag.remove();
+                        }
+                    }, function() {
+                        tag.remove();
+                    }, false, {
+                        headers: { 'X-API-KEY': '653f6b8a-d94a-43c6-93af-6ce67a2cc5c4' }
+                    });
                 } else {
-                    console.log('KP Rating: Container not found or rating already exists');
+                    console.log('KP RATING: ERROR - Could not find container to show rating');
                 }
             }
         });
     }
 
-    function drawRating(card, container) {
-        var network = new Lampa.Request();
-        var title = card.title || card.name;
-        
-        var loader = $('<span class="kp-rating-custom" style="margin-left: 10px; color: #aaa;">КП: ..</span>');
-        container.append(loader);
-
-        var url = 'https://cors.lampa.stream/https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=' + encodeURIComponent(title);
-
-        network.silent(url, function (json) {
-            var film = (json.films || [])[0];
-            if (film && film.rating && film.rating !== 'null') {
-                loader.text('КП: ' + film.rating).css({
-                    'background': '#f50',
-                    'color': '#fff',
-                    'padding': '2px 6px',
-                    'border-radius': '4px',
-                    'font-weight': 'bold',
-                    'margin-left': '10px'
-                });
-            } else {
-                console.log('KP Rating: Rating is null or film not found');
-                loader.remove();
-            }
-        }, function () {
-            loader.remove();
-        }, false, {
-            headers: { 'X-API-KEY': '653f6b8a-d94a-43c6-93af-6ce67a2cc5c4' }
-        });
-    }
-
-    startPlugin();
+    // Запуск через 1 секунду, чтобы Lampa успела прогрузить свои компоненты
+    setTimeout(init, 1000);
 })();
