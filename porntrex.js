@@ -1,27 +1,28 @@
 (function () {
     'use strict';
 
-    // 1. Описываем сам компонент
-    function PorntrexComponent(object) {
+    // Выносим конструктор в глобальную область, чтобы Lampa точно его видела
+    window.Porntrex = function (object) {
         var network = new Lampa.Reguest();
-        var scroll = new Lampa.Scroll({mask: true, over: true});
+        var scroll = new Lampa.Scroll({
+            mask: true,
+            over: true
+        });
         var items = [];
         var html = $('<div class="category-full"></div>');
         var body = $('<div class="category-full__body"></div>');
-        var wait = Lampa.Template.get('loader');
-        
         var host = 'https://www.porntrex.com';
         var proxy = 'https://cors.lampa.stream/';
 
-        // Обязательный метод для Lampa
         this.create = function () {
-            this.activity.loader(true); // Сообщаем системе, что мы загружаемся
+            var _this = this;
             
-            // Собираем визуальную структуру
+            // Сообщаем активности, что мы начали загрузку
+            if (this.activity && this.activity.loader) this.activity.loader(true);
+
             html.append(scroll.render());
             scroll.append(body);
             
-            // Запускаем загрузку данных
             this.load();
 
             return html;
@@ -29,12 +30,14 @@
 
         this.load = function () {
             var _this = this;
+            // По умолчанию грузим "Most Recent", если нет поискового запроса
             var url = proxy + host + (object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/most-recent/') + '?p=' + (object.page || 1);
 
             network.silent(url, function (str) {
-                _this.activity.loader(false);
+                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
                 _this.parse(str);
             }, function () {
+                if (_this.activity && _this.activity.loader) _this.activity.loader(false);
                 Lampa.Noty.show('Ошибка сети Porntrex');
             });
         };
@@ -52,20 +55,25 @@
 
                     if (link.attr('href')) {
                         var card_data = {
-                            title: link.attr('title') || $this.find('.title').text().trim(),
+                            title: link.attr('title') || $this.find('.title').text().trim() || 'No Title',
                             url: host + link.attr('href'),
                             img: img,
                             time: time
                         };
 
-                        var card = Lampa.Template.get('card', {title: card_data.title});
+                        var card = Lampa.Template.get('card', {
+                            title: card_data.title
+                        });
+                        
                         card.addClass('card--collection');
                         card.find('.card__img').attr('src', card_data.img);
                         
-                        // Безопасная вставка времени
-                        var age = card.find('.card__age');
-                        if(age.length) age.text(card_data.time);
-                        else card.prepend('<div class="card__age">'+card_data.time+'</div>');
+                        // Добавляем время видео
+                        if (card_data.time) {
+                            var age = card.find('.card__age');
+                            if (age.length) age.text(card_data.time);
+                            else card.find('.card__view').after('<div class="card__age">' + card_data.time + '</div>');
+                        }
 
                         card.on('hover:enter', function () {
                             _this.play(card_data);
@@ -76,10 +84,9 @@
                     }
                 });
                 
-                // Передаем управление пульту
                 Lampa.Controller.enable('content');
             } else {
-                body.append('<div class="empty">Ничего не найдено</div>');
+                body.append('<div class="empty">Ничего не найдено (Селекторы не совпали)</div>');
             }
         };
 
@@ -88,6 +95,7 @@
             network.silent(proxy + data.url, function (html) {
                 var video_url = '';
                 var config = html.match(/flashvars\s*=\s*({.*?});/i);
+                
                 if (config) {
                     try {
                         var parsed = JSON.parse(config[1]);
@@ -96,11 +104,15 @@
                 }
                 
                 if (!video_url) {
-                    var match = html.match(/video_url:\s*'(.*?)'/i) || html.match(/"video_url":\s*"(.*?)"/i);
+                    var match = html.match(/video_url:\s*'(.*?)'/i) || 
+                                html.match(/"video_url":\s*"(.*?)"/i) ||
+                                html.match(/source\s*src="(.*?)"/i);
                     if (match) video_url = match[1].replace(/\\/g, '');
                 }
 
                 if (video_url) {
+                    if (!video_url.startsWith('http')) video_url = 'https:' + video_url;
+                    
                     Lampa.Player.play({
                         url: video_url,
                         title: data.title
@@ -109,28 +121,30 @@
                         Lampa.Controller.toggle('content');
                     });
                 } else {
-                    Lampa.Noty.show('Видео поток не найден');
+                    Lampa.Noty.show('Поток не найден. Возможно, требуется Premium.');
                 }
             });
         };
 
         this.pause = function () {};
         this.stop = function () {};
-        this.render = function () { return html; };
+        this.render = function () {
+            return html;
+        };
         this.destroy = function () {
             network.clear();
             scroll.destroy();
             html.remove();
             items = [];
         };
-    }
+    };
 
-    // 2. Инициализация плагина
-    function init() {
-        // Регистрируем компонент в глобальном списке Lampa
-        Lampa.Component.add('porntrex', PorntrexComponent);
+    // Функция инициализации
+    function startPlugin() {
+        // Регистрация компонента
+        Lampa.Component.add('porntrex', window.Porntrex);
 
-        // Добавляем пункт меню (строго один раз)
+        // Добавление в меню
         var menu_item = $('<li class="menu__item selector" data-action="porntrex">' +
             '<div class="menu__ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 16.5V7.5L16 12L10 16.5ZM12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor"/></svg></div>' +
             '<div class="menu__text">Porntrex</div>' +
@@ -144,19 +158,16 @@
             });
         });
 
-        // Ищем только главное меню (обычно первое)
-        var main_list = $('.menu .menu__list').first();
-        if (main_list.length) {
-            // Чтобы не дублировать при перезагрузках
-            main_list.find('[data-action="porntrex"]').remove();
-            main_list.append(menu_item);
+        // Добавляем только один раз
+        var list = $('.menu .menu__list').first();
+        if (list.length && !list.find('[data-action="porntrex"]').length) {
+            list.append(menu_item);
         }
     }
 
-    // Запуск при готовности приложения
-    if (window.appready) init();
+    if (window.appready) startPlugin();
     else Lampa.Listener.follow('app', function (e) {
-        if (e.type == 'ready') init();
+        if (e.type == 'ready') startPlugin();
     });
 
 })();
