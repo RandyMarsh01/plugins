@@ -1,50 +1,36 @@
 (function () {
     'use strict';
 
+    // Конструктор компонента Porntrex
     function Porntrex(object) {
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({mask: true, over: true});
         var items = [];
         var html = $('<div></div>');
         var body = $('<div class="category-full"></div>');
-        var info;
-        var last;
         var wait;
-
-        // Настройки адресов
         var host = 'https://www.porntrex.com';
         var proxy = 'https://cors.lampa.stream/';
 
         this.create = function () {
             var _this = this;
-            
-            // Создаем экран ожидания
             wait = Lampa.Template.get('loader');
             html.append(wait);
             html.append(scroll.render());
             scroll.append(body);
-
-            // Обработка фокуса на плитке (показ названия)
-            scroll.onWheel = function () {
-                Lampa.Focus.set(body);
-            };
-
             return html;
         };
 
         this.start = function () {
-            this.load();
-        };
-
-        this.load = function () {
             var _this = this;
-            var url = proxy + host + (object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/most-recent/') + '?p=' + object.page;
+            var url = proxy + host + (object.query ? '/search/' + encodeURIComponent(object.query) + '/' : '/most-recent/') + '?p=' + (object.page || 1);
 
             network.silent(url, function (str) {
-                wait.remove();
+                if (wait) wait.remove();
                 _this.parse(str);
             }, function () {
-                Lampa.Noty.show('Ошибка загрузки Porntrex');
+                if (wait) wait.remove();
+                Lampa.Noty.show('Ошибка загрузки данных');
             });
         };
 
@@ -67,15 +53,12 @@
                             time: time
                         };
 
-                        // Создаем визуальную плитку в стиле Lampa
                         var card = Lampa.Template.get('card', {title: card_data.title});
                         card.addClass('card--collection');
                         card.find('.card__img').attr('src', card_data.img);
-                        card.find('.card__age').text(card_data.time);
-
-                        card.on('hover:focus', function () {
-                            last = card[0];
-                        });
+                        
+                        // Если в шаблоне нет card__age, добавим текст внизу
+                        if(card.find('.card__age').length) card.find('.card__age').text(card_data.time);
 
                         card.on('hover:enter', function () {
                             _this.play(card_data);
@@ -85,7 +68,8 @@
                         items.push(card);
                     }
                 });
-
+                
+                // Включаем контроллер, чтобы можно было перемещаться пультом
                 Lampa.Controller.enable('content');
             } else {
                 body.append('<div class="empty">Ничего не найдено</div>');
@@ -93,7 +77,7 @@
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Извлекаю видео...');
+            Lampa.Noty.show('Поиск потока...');
             network.silent(proxy + data.url, function (html) {
                 var video_url = '';
                 var config = html.match(/flashvars\s*=\s*({.*?});/i);
@@ -103,9 +87,13 @@
                         video_url = parsed.video_url || parsed.url;
                     } catch (e) {}
                 }
+                
+                if (!video_url) {
+                    var match = html.match(/video_url:\s*'(.*?)'/i) || html.match(/"video_url":\s*"(.*?)"/i);
+                    if (match) video_url = match[1].replace(/\\/g, '');
+                }
 
                 if (video_url) {
-                    // Запуск плеера Lampa
                     Lampa.Player.play({
                         url: video_url,
                         title: data.title
@@ -114,7 +102,7 @@
                         Lampa.Controller.toggle('content');
                     });
                 } else {
-                    Lampa.Noty.show('Не удалось найти видео-поток');
+                    Lampa.Noty.show('Видео недоступно');
                 }
             });
         };
@@ -130,30 +118,29 @@
         };
     }
 
-    // Регистрация в меню Lampa
+    // Регистрация плагина в Lampa
     function init() {
-        // Добавляем пункт в боковое меню
+        // Регистрируем компонент ПЕРЕД созданием пункта меню
+        Lampa.Component.add('porntrex', Porntrex);
+
         var menu_item = $('<li class="menu__item selector" data-action="porntrex">' +
-            '<div class="menu__ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 16.5V7.5L16 12L10 16.5Z" fill="white"/></svg></div>' +
+            '<div class="menu__ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 16.5V7.5L16 12L10 16.5ZM12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor"/></svg></div>' +
             '<div class="menu__text">Porntrex</div>' +
         '</li>');
 
-        $('.menu .menu__list').append(menu_item);
-
-        // Обработка клика по меню
         menu_item.on('hover:enter', function () {
             Lampa.Activity.push({
                 url: '',
                 title: 'Porntrex',
-                component: 'porntrex',
+                component: 'porntrex', // имя компонента, который мы зарегистрировали выше
                 page: 1
             });
         });
 
-        // Регистрируем компонент в системе
-        Lampa.Component.add('porntrex', Porntrex);
+        $('.menu .menu__list').append(menu_item);
     }
 
+    // Ждем готовности приложения
     if (window.appready) init();
     else Lampa.Listener.follow('app', function (e) {
         if (e.type == 'ready') init();
