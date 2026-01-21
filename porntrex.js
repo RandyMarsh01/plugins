@@ -8,8 +8,8 @@
         var html = $('<div class="category-full"></div>');
         var body = $('<div class="category-full__body"></div>');
         
-        // Используем более мощный прокси-агрегатор
-        var proxy = 'https://cors-proxy.htmldriven.com/?url=';
+        // Переключаемся на максимально стабильный прокси для обхода CORS
+        var proxy = 'https://api.allorigins.win/get?url=';
         var host = 'https://www.porntrex.com';
 
         this.create = function () {
@@ -21,40 +21,32 @@
         this.start = function () {
             var _this = this;
             
-            // Кнопка поиска теперь всегда доступна в шапке (справа)
-            this.renderHeader();
+            // Создаем первую карточку-кнопку для вызова поиска/категорий
+            var menu_card = Lampa.Template.get('card', {title: '🔍 ВЫБОР КАТЕГОРИИ / ПОИСК'});
+            menu_card.addClass('card--collection');
+            menu_card.find('.card__img').css('background', '#ff1a1a');
+            menu_card.on('hover:enter', function() {
+                _this.showMenu();
+            });
+            body.append(menu_card);
 
             Lampa.Loading.start();
             this.load();
         };
 
-        this.renderHeader = function() {
+        this.showMenu = function() {
             var _this = this;
-            // Создаем кнопку поиска/фильтра в стиле Lampa (справа)
-            var filter_btn = $('<div class="head__action selector head__filter"><svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" fill="currentColor"/></svg></div>');
-            
-            filter_btn.on('click', function() {
-                _this.showSidebar();
-            });
-
-            Lampa.Head.add(filter_btn);
-        };
-
-        this.showSidebar = function() {
-            var _this = this;
-            var menu_items = [
+            var list = [
                 {title: '🔍 Поиск видео', search: true},
                 {title: '🆕 Новинки', url: '/videos/'},
                 {title: '🔥 Популярные', url: '/most-popular/'},
-                {title: '📅 Топ месяца', url: '/top-rated/month/'},
-                {title: '📁 Категория: Milf', url: '/categories/milf/'},
-                {title: '📁 Категория: Anal', url: '/categories/anal/'},
-                {title: '📁 Категория: Asian', url: '/categories/asian/'}
+                {title: '👩 Milf', url: '/categories/milf/'},
+                {title: '🔞 Anal', url: '/categories/anal/'}
             ];
 
             Lampa.Select.show({
-                title: 'Фильтры Porntrex',
-                items: menu_items,
+                title: 'Porntrex Меню',
+                items: list,
                 onSelect: function(item) {
                     if (item.search) {
                         Lampa.Input.edit({title: 'Поиск', value: '', free: true}, function(val) {
@@ -81,36 +73,31 @@
             var path = object.url || '/videos/';
             var target = host + path + '?p=' + (object.page || 1);
             
-            // Пробуем альтернативный метод загрузки
-            $.ajax({
-                url: proxy + encodeURIComponent(target),
-                method: 'GET',
-                success: function (data) {
-                    Lampa.Loading.stop();
-                    // htmldriven может возвращать JSON или строку
-                    var html_content = typeof data === 'string' ? data : (data.content || data.body || '');
-                    if (html_content) _this.parse(html_content);
-                    else _this.empty('Пустой ответ от прокси.');
-                },
-                error: function () {
-                    Lampa.Loading.stop();
-                    _this.empty('Прокси недоступен. Попробуйте сменить регион в VPN.');
+            // Запрос через silent + encode для обхода CORS
+            network.silent(proxy + encodeURIComponent(target), function (json) {
+                Lampa.Loading.stop();
+                if (json && json.contents) {
+                    _this.parse(json.contents);
+                } else {
+                    _this.empty('Сайт не ответил. Попробуйте нажать кнопку МЕНЮ.');
                 }
+            }, function () {
+                Lampa.Loading.stop();
+                _this.empty('Ошибка сети. Проверьте VPN или смените категорию.');
             });
         };
 
         this.parse = function (str) {
             var _this = this;
-            body.empty();
             var clean = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
             var dom = $($.parseHTML(clean));
-            var cards = dom.find('.video-item, .item-video, .thumb-block');
+            var cards = dom.find('.video-item, .item-video, .thumb-block, .p-v-thumb');
 
             cards.each(function () {
                 var $this = $(this);
                 var a = $this.find('a[href*="/video/"]').first();
                 var img = $this.find('img').attr('data-src') || $this.find('img').attr('src');
-                var title = a.attr('title') || $this.find('.title').text();
+                var title = a.attr('title') || $this.find('.title, .name').text();
 
                 if (a.attr('href') && title) {
                     var card_data = {
@@ -131,6 +118,7 @@
                     });
 
                     body.append(card);
+                    items.push(card);
                 }
             });
 
@@ -146,8 +134,9 @@
         };
 
         this.play = function (data) {
-            Lampa.Noty.show('Запуск видео...');
-            $.get(proxy + encodeURIComponent(data.url), function(html) {
+            Lampa.Noty.show('Загрузка потока...');
+            network.silent(proxy + encodeURIComponent(data.url), function(json) {
+                var html = json.contents || '';
                 var match = html.match(/"video_url":"(.*?)"/) || html.match(/source\s*src="(.*?)"/);
                 var stream = match ? match[1].replace(/\\/g, '') : '';
                 if (stream) {
@@ -155,8 +144,9 @@
                         url: stream.startsWith('//') ? 'https:' + stream : stream,
                         title: data.title
                     });
+                    Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
                 } else {
-                    Lampa.Noty.show('Видео поток не найден');
+                    Lampa.Noty.show('Видео не найдено');
                 }
             });
         };
@@ -167,7 +157,7 @@
 
         this.render = function () { return html; };
         this.destroy = function () { 
-            Lampa.Head.clear(); 
+            network.clear();
             scroll.destroy(); 
             html.remove(); 
         };
